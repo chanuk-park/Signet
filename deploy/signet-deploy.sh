@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Deploy (or remove) the arm-B N4 DTLS sidecars on a generic OAI deployment.
+# SPDX-License-Identifier: Apache-2.0
+# Deploy (or remove) the Signet sidecars on a generic OAI deployment.
 #
-#   ./n4dtls-deploy.sh up      [--smf-pod <name>] [--upf-pod <name>] [--namespace core] [--mtu 1200]
-#   ./n4dtls-deploy.sh down
-#   ./n4dtls-deploy.sh status
+#   ./signet-deploy.sh up      [--smf-pod <name>] [--upf-pod <name>] [--namespace core] [--mtu 1200]
+#   ./signet-deploy.sh down
+#   ./signet-deploy.sh status
 #
 # Discovers the SMF/UPF pods, their host node, container PID and N4 address by itself; the
-# NF is never modified. Requires deploy.env from spire-bootstrap.sh, the n4dtls binary, and
+# NF is never modified. Requires deploy.env from spire-bootstrap.sh, the signet binary, and
 # kubectl+crictl+ssh access to the NF nodes.
 #
 # Order matters and is enforced: the UPF side (DTLS server) starts first and only LISTENS;
@@ -17,8 +18,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NS="core"; MTU=1200; SMF_POD=""; UPF_POD=""; UPF_N4=""; DISCOVER_WAIT=20
-BIN_SRC="${N4DTLS_BIN:-$HERE/../n4dtls}"
-REMOTE_BIN=/tmp/n4dtls
+BIN_SRC="${SIGNET_BIN:-$HERE/../signet}"
+REMOTE_BIN=/tmp/signet
 SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=no"
 SMF_Q=62; UPF_Q=61; DPORT=8805; DTLS_PORT=8806
 
@@ -80,31 +81,31 @@ push_bin() { # place the sidecar on a node, ALWAYS refreshing it
   local node="$1"
   case " $(hostname -I) " in
     *" $node "*) sudo install -m0755 "$BIN_SRC" "$REMOTE_BIN";;
-    *) scp $SSH_OPTS -q "$BIN_SRC" "$node:/tmp/n4dtls.new"; on "$node" "install -m0755 /tmp/n4dtls.new $REMOTE_BIN && rm -f /tmp/n4dtls.new";;
+    *) scp $SSH_OPTS -q "$BIN_SRC" "$node:/tmp/signet.new"; on "$node" "install -m0755 /tmp/signet.new $REMOTE_BIN && rm -f /tmp/signet.new";;
   esac
 }
 
 up() {
-  [ -x "$BIN_SRC" ] || { echo "n4dtls binary not found at $BIN_SRC (build: CGO_ENABLED=1 go build -o n4dtls ./cmd/n4dtls)" >&2; exit 2; }
+  [ -x "$BIN_SRC" ] || { echo "signet binary not found at $BIN_SRC (build: CGO_ENABLED=1 go build -o signet ./cmd/signet)" >&2; exit 2; }
   discover
   echo "SMF $SMF_POD @ $SMF_NODE_NAME($SMF_HOST) pid=$SMF_PID"
   echo "UPF $UPF_POD @ $UPF_NODE_NAME($UPF_HOST) pid=$UPF_PID n4=$UPF_N4"
   push_bin "$SMF_HOST"; push_bin "$UPF_HOST"
 
   echo "-- UPF side (DTLS server; listens, no capture yet) --"
-  on "$UPF_HOST" "systemctl reset-failed armb-upf 2>/dev/null; systemctl stop armb-upf 2>/dev/null; \
-    systemd-run --unit=armb-upf --collect /usr/bin/nsenter -t $UPF_PID -n env CIRRUS_SPIRE_SOCKET=$SPIRE_SOCKET \
+  on "$UPF_HOST" "systemctl reset-failed signet-upf 2>/dev/null; systemctl stop signet-upf 2>/dev/null; \
+    systemd-run --unit=signet-upf --collect /usr/bin/nsenter -t $UPF_PID -n env SIGNET_SPIRE_SOCKET=$SPIRE_SOCKET \
     $REMOTE_BIN -role server -listen 0.0.0.0:$DTLS_PORT -peer-id $SMF_SPIFFE_ID \
     ${SPIRE_ADMIN_SOCKET:+-delegated-socket $SPIRE_ADMIN_SOCKET -workload-pid $UPF_PID -identity $UPF_SPIFFE_ID} \
-    -nfqueue $UPF_Q -tun n4dtls0 -install-nfq-rule -dport $DPORT -mtu $MTU" >/dev/null
+    -nfqueue $UPF_Q -tun signet0 -install-nfq-rule -dport $DPORT -mtu $MTU" >/dev/null
   sleep 3
 
   echo "-- SMF side (DTLS client; dials, then both install capture) --"
-  on "$SMF_HOST" "systemctl reset-failed armb-smf 2>/dev/null; systemctl stop armb-smf 2>/dev/null; \
-    systemd-run --unit=armb-smf --collect /usr/bin/nsenter -t $SMF_PID -n env CIRRUS_SPIRE_SOCKET=$SPIRE_SOCKET \
+  on "$SMF_HOST" "systemctl reset-failed signet-smf 2>/dev/null; systemctl stop signet-smf 2>/dev/null; \
+    systemd-run --unit=signet-smf --collect /usr/bin/nsenter -t $SMF_PID -n env SIGNET_SPIRE_SOCKET=$SPIRE_SOCKET \
     $REMOTE_BIN -role client -peer $UPF_N4:$DTLS_PORT -peer-id $UPF_SPIFFE_ID \
     ${SPIRE_ADMIN_SOCKET:+-delegated-socket $SPIRE_ADMIN_SOCKET -workload-pid $SMF_PID -identity $SMF_SPIFFE_ID} \
-    -nfqueue $SMF_Q -tun n4dtls0 -install-nfq-rule -dport $DPORT -mtu $MTU" >/dev/null
+    -nfqueue $SMF_Q -tun signet0 -install-nfq-rule -dport $DPORT -mtu $MTU" >/dev/null
   sleep 5
   status
 }
@@ -112,8 +113,8 @@ up() {
 down() {
   discover
   echo "-- stopping sidecars --"
-  on "$SMF_HOST" "systemctl stop armb-smf 2>/dev/null; systemctl kill -s SIGKILL armb-smf 2>/dev/null; systemctl reset-failed armb-smf 2>/dev/null" || true
-  on "$UPF_HOST" "systemctl stop armb-upf 2>/dev/null; systemctl kill -s SIGKILL armb-upf 2>/dev/null; systemctl reset-failed armb-upf 2>/dev/null" || true
+  on "$SMF_HOST" "systemctl stop signet-smf 2>/dev/null; systemctl kill -s SIGKILL signet-smf 2>/dev/null; systemctl reset-failed signet-smf 2>/dev/null" || true
+  on "$UPF_HOST" "systemctl stop signet-upf 2>/dev/null; systemctl kill -s SIGKILL signet-upf 2>/dev/null; systemctl reset-failed signet-upf 2>/dev/null" || true
   sleep 2
   echo "-- removing any leftover rules / tun (idempotent) --"
   for spec in "$SMF_HOST:$SMF_PID:$SMF_Q" "$UPF_HOST:$UPF_PID:$UPF_Q"; do
@@ -121,7 +122,7 @@ down() {
     on "$host" "nsenter -t $pid -n iptables -t mangle -D OUTPUT -p udp --dport $DPORT -j NFQUEUE --queue-num $q --queue-bypass 2>/dev/null; \
                 nsenter -t $pid -n iptables -t mangle -D OUTPUT -p udp --sport $DPORT -j NFQUEUE --queue-num $q --queue-bypass 2>/dev/null; \
                 nsenter -t $pid -n iptables -t mangle -D OUTPUT -m mark --mark 20020 -j ACCEPT 2>/dev/null; \
-                nsenter -t $pid -n ip link del n4dtls0 2>/dev/null; true"
+                nsenter -t $pid -n ip link del signet0 2>/dev/null; true"
   done
   echo "-- N4 is back in plaintext; the NF was never modified --"
 }
@@ -129,13 +130,13 @@ down() {
 status() {
   [ -n "${SMF_PID:-}" ] || discover
   echo "-- units --"
-  echo "   smf: $(on "$SMF_HOST" 'systemctl is-active armb-smf' 2>/dev/null || echo inactive)"
-  echo "   upf: $(on "$UPF_HOST" 'systemctl is-active armb-upf' 2>/dev/null || echo inactive)"
+  echo "   smf: $(on "$SMF_HOST" 'systemctl is-active signet-smf' 2>/dev/null || echo inactive)"
+  echo "   upf: $(on "$UPF_HOST" 'systemctl is-active signet-upf' 2>/dev/null || echo inactive)"
   echo "-- session --"
-  on "$SMF_HOST" "journalctl -u armb-smf --no-pager 2>/dev/null | grep -oE 'DTLS session up.*|auth=[^ ]+ cipher=[^ ]+ handshakes=[0-9]+|FATAL.*' | tail -2" 2>/dev/null | sed 's/^/   /'
+  on "$SMF_HOST" "journalctl -u signet-smf --no-pager 2>/dev/null | grep -oE 'DTLS session up.*|auth=[^ ]+ cipher=[^ ]+ handshakes=[0-9]+|FATAL.*' | tail -2" 2>/dev/null | sed 's/^/   /'
   echo "-- counters (captured=intercepted, sent/recv=tunneled, injected=reinjected) --"
-  echo "   smf: $(on "$SMF_HOST" "journalctl -u armb-smf --no-pager 2>/dev/null | grep -oE 'captured=[0-9]+ sent=[0-9]+ recv=[0-9]+ injected=[0-9]+ drop_verdict=[0-9]+' | tail -1" 2>/dev/null)"
-  echo "   upf: $(on "$UPF_HOST" "journalctl -u armb-upf --no-pager 2>/dev/null | grep -oE 'captured=[0-9]+ sent=[0-9]+ recv=[0-9]+ injected=[0-9]+ drop_verdict=[0-9]+' | tail -1" 2>/dev/null)"
+  echo "   smf: $(on "$SMF_HOST" "journalctl -u signet-smf --no-pager 2>/dev/null | grep -oE 'captured=[0-9]+ sent=[0-9]+ recv=[0-9]+ injected=[0-9]+ drop_verdict=[0-9]+' | tail -1" 2>/dev/null)"
+  echo "   upf: $(on "$UPF_HOST" "journalctl -u signet-upf --no-pager 2>/dev/null | grep -oE 'captured=[0-9]+ sent=[0-9]+ recv=[0-9]+ injected=[0-9]+ drop_verdict=[0-9]+' | tail -1" 2>/dev/null)"
 }
 
 case "$CMD" in

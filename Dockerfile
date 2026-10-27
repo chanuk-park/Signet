@@ -1,9 +1,10 @@
-# n4dtls as a container image. This is the primary artifact: the sidecar is meant to run as
+# SPDX-License-Identifier: Apache-2.0
+# signet as a container image. This is the primary artifact: the sidecar is meant to run as
 # a container in the network function's pod, where it shares that pod's network namespace
 # and is attested by SPIRE as the pod itself.
 #
 # Multi-stage so the image builds from a clone with no prior steps:
-#   docker build -t ghcr.io/chanuk-park/dtls-sidecar:latest .
+#   docker build -t ghcr.io/chanuk-park/signet:latest .
 
 FROM golang:1.24-bookworm AS build
 # The NFQUEUE binding is cgo, so the build needs the library headers.
@@ -15,7 +16,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
-RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/n4dtls ./cmd/n4dtls
+RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/signet ./cmd/signet
 
 FROM debian:bookworm-slim
 # libnetfilter-queue for the capture binding, iptables to install the capture rule in the
@@ -24,7 +25,7 @@ FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libnetfilter-queue1 iptables iproute2 conntrack \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=build /out/n4dtls /usr/local/bin/n4dtls
+COPY --from=build /out/signet /usr/local/bin/signet
 
 # Requires CAP_NET_ADMIN and /dev/net/tun; see deploy/README.md.
-ENTRYPOINT ["/usr/local/bin/n4dtls"]
+ENTRYPOINT ["/usr/local/bin/signet"]

@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Go quality gates, each mapped to the Makefile target that defines it so CI
+# and a local run enforce the same rules. The NFQUEUE binding is cgo, so every
+# job that compiles installs libnetfilter-queue-dev first. Tunnel tests need
+# SPIRE, CAP_NET_ADMIN and a 5G core, so they stay local (deploy/signet-verify.sh).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go-fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install libnetfilter-queue
+        run: sudo apt-get update && sudo apt-get install -y libnetfilter-queue-dev
+      - name: Check gofmt
+        run: make gofmt
+
+  go-vet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install libnetfilter-queue
+        run: sudo apt-get update && sudo apt-get install -y libnetfilter-queue-dev
+      - name: Build
+        run: make build
+      - name: Run go vet
+        run: make vet
+
+  go-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install libnetfilter-queue
+        run: sudo apt-get update && sudo apt-get install -y libnetfilter-queue-dev
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+
+  go-sec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install libnetfilter-queue
+        run: sudo apt-get update && sudo apt-get install -y libnetfilter-queue-dev
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: Run gosec
+        run: make gosec
+
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install libnetfilter-queue
+        run: sudo apt-get update && sudo apt-get install -y libnetfilter-queue-dev
+      - name: Run unit tests
+        run: make test
+
+  build-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the signet image
+        run: make build-image

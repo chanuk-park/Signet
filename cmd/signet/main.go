@@ -3,14 +3,14 @@
 
 //go:build linux && cgo
 
-// n4dtls is the arm-B sidecar: it puts SPIRE-issued, mutually-authenticated DTLS on the
-// Multus N4 link WITHOUT modifying the NF. It is symmetric — the same binary runs beside
-// the SMF and beside the UPF. On each side it captures the NF's egress PFCP with the SAME
-// NFQUEUE machinery arm A uses (§2 D1), ships the WHOLE IP packet as an opaque blob over an
-// established DTLS session (§2 D2 — no terminating proxy, the PFCP payload and its F-SEID /
-// Node ID IEs are never touched), and reinjects packets received from the peer on the local
-// input path via a TUN device. The credential is an X509-SVID from the SPIRE Workload API;
-// the peer is authorized by its SPIFFE ID (§2 D3). No PSK, no static cert, no skip-verify.
+// signet puts SPIRE-issued, mutually-authenticated DTLS on the Multus N4 link WITHOUT
+// modifying the NF. It is symmetric — the same binary runs beside the SMF and beside the
+// UPF. On each side it captures the NF's egress PFCP with NFQUEUE, ships the WHOLE IP packet
+// as an opaque blob over an established DTLS session (no terminating proxy: the PFCP payload
+// and its F-SEID / Node ID IEs are never touched), and reinjects packets received from the
+// peer on the local input path via a TUN device. The credential is an X509-SVID from the
+// SPIRE Workload API; the peer is authorized by its SPIFFE ID. No PSK, no static cert, no
+// skip-verify.
 package main
 
 import (
@@ -37,8 +37,8 @@ func main() {
 	role := flag.String("role", "", "client|server (which side dials the DTLS session; the pair must differ)")
 	peer := flag.String("peer", "", "peer agent DTLS address host:port (role=client)")
 	listen := flag.String("listen", "0.0.0.0:8806", "DTLS listen address (role=server)")
-	spiffeSock := flag.String("spiffe-socket", os.Getenv("CIRRUS_SPIRE_SOCKET"), "SPIRE Workload API socket (unix:///...)")
-	delegatedSock := flag.String("delegated-socket", os.Getenv("CIRRUS_SPIRE_DELEGATED_SOCKET"),
+	spiffeSock := flag.String("spiffe-socket", os.Getenv("SIGNET_SPIRE_SOCKET"), "SPIRE Workload API socket (unix:///...)")
+	delegatedSock := flag.String("delegated-socket", os.Getenv("SIGNET_SPIRE_DELEGATED_SOCKET"),
 		"SPIRE agent Delegated Identity (admin) socket. With -workload-pid, SPIRE attests the "+
 			"NF process itself and this sidecar presents the NF's identity -- the Envoy-with-SPIRE "+
 			"model for a sidecar that cannot live inside the pod. Without it the Workload API "+
@@ -47,11 +47,11 @@ func main() {
 	selfID := flag.String("identity", "", "SPIFFE ID this sidecar must present. SPIRE hands a "+
 		"delegate every SVID it may see, including its own, so the one to use has to be named.")
 	peerID := flag.String("peer-id", "", "expected peer SPIFFE ID (AuthorizeID) — mutual auth")
-	queueNum := flag.Int("nfqueue", 42, "NFQUEUE number for captured egress PFCP (must match the iptables rule; §D1 same as arm A)")
+	queueNum := flag.Int("nfqueue", 42, "NFQUEUE number for captured egress PFCP (must match the iptables rule)")
 	dport := flag.Int("dport", 8805, "PFCP UDP port captured on OUTPUT")
-	tunName := flag.String("tun", "n4dtls0", "TUN device used to reinject peer packets")
+	tunName := flag.String("tun", "signet0", "TUN device used to reinject peer packets")
 	mark := flag.Int("mark", 0x4e34, "fwmark for injected packets / the accept-before-queue rule (loop guard)")
-	mtu := flag.Int("mtu", 1200, "DTLS MTU (§D4: Multus MTU must be lowered to match so PFCP never fragments)")
+	mtu := flag.Int("mtu", 1200, "DTLS MTU (lower the Multus MTU to match so PFCP never fragments)")
 	mode := flag.String("mode", "socket", "datapath: socket (proxy, like Envoy: REDIRECT into a "+
 		"socket, deliver transparently -- no NFQUEUE, no TUN, no cgo) | nfqueue (packet capture "+
 		"with deferred verdicts; only needed to share an interception path with a capture-based gate)")
@@ -159,7 +159,7 @@ func main() {
 	}
 
 	fmt.Fprintf(os.Stderr,
-		"ARMB-STATE component=n4dtls role=%s mode=%s self=%s peer_id=%s identity=%s attested_pid=%d "+
+		"SIGNET-STATE component=signet role=%s mode=%s self=%s peer_id=%s identity=%s attested_pid=%d "+
 			"nfqueue=%d dport=%d tun=%s mtu=%d mark=%#x auth=x509-svid+mutual cipher=%s "+
 			"handshakes=%d rotation=live fail=drop payload=untouched\n",
 		*role, *mode, id.spiffe, *peerID, id.mode, *workloadPID, *queueNum, *dport, *tunName, *mtu, *mark,
@@ -190,11 +190,11 @@ func main() {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Fprintf(os.Stderr, "n4dtls: shutting down (captured=%d sent=%d recv=%d injected=%d drop=%d)\n",
+			fmt.Fprintf(os.Stderr, "signet: shutting down (captured=%d sent=%d recv=%d injected=%d drop=%d)\n",
 				nCaptured.Load(), nSent.Load(), nRecv.Load(), nInjected.Load(), nDropVerdict.Load())
 			return
 		case <-tick.C:
-			fmt.Fprintf(os.Stderr, "n4dtls: captured=%d sent=%d recv=%d injected=%d drop_verdict=%d handshakes=%d\n",
+			fmt.Fprintf(os.Stderr, "signet: captured=%d sent=%d recv=%d injected=%d drop_verdict=%d handshakes=%d\n",
 				nCaptured.Load(), nSent.Load(), nRecv.Load(), nInjected.Load(), nDropVerdict.Load(), nHandshake.Load())
 		}
 	}
@@ -341,9 +341,7 @@ func connect(ctx context.Context, id *identity, role, peer, listen string) (*dtl
 	}
 }
 
-
-// installNfqRules mirrors arm A's interception exactly (§D1): capture egress PFCP into the
-// same queue. The accept-mark rule in front is the loop guard for injection primitive C and
+// installNfqRules captures egress PFCP into the NFQUEUE. The accept-mark rule in front is the loop guard for injection primitive C and
 // is harmless for the TUN path (injected packets never traverse OUTPUT). All in mangle.
 func installNfqRules(queueNum, dport, mark int) error {
 	// Capture PFCP in BOTH directions: a request has dst port 8805, but a core that sends
@@ -360,7 +358,7 @@ func installNfqRules(queueNum, dport, mark int) error {
 		if out, err := exec.Command("iptables", r...).CombinedOutput(); err != nil {
 			return fmt.Errorf("iptables %v: %v (%s)", r, err, out)
 		}
-		fmt.Fprintf(os.Stderr, "n4dtls: installed iptables %v\n", r)
+		fmt.Fprintf(os.Stderr, "signet: installed iptables %v\n", r)
 	}
 	return nil
 }
@@ -372,17 +370,17 @@ func removeNfqRules(queueNum, dport, mark int) {
 		{"-t", "mangle", "-D", "OUTPUT", "-p", "udp", "--sport", fmt.Sprintf("%d", dport), "-j", "NFQUEUE", "--queue-num", fmt.Sprintf("%d", queueNum), "--queue-bypass"},
 	}
 	for _, r := range rules {
-		exec.Command("iptables", r...).Run()
+		_ = exec.Command("iptables", r...).Run() // best effort: the rule may already be gone
 	}
 }
 
 // logf is the one place sidecar diagnostics are written, so every component reports the
 // same way regardless of which goroutine it runs on.
 func logf(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "n4dtls: "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, "signet: "+format+"\n", a...)
 }
 
 func die(msg string) {
-	fmt.Fprintln(os.Stderr, "n4dtls: FATAL "+msg)
+	fmt.Fprintln(os.Stderr, "signet: FATAL "+msg)
 	os.Exit(1)
 }

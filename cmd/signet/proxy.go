@@ -94,10 +94,10 @@ func decodeFrame(b []byte) (src, dst netip.AddrPort, payload []byte, err error) 
 
 // proxy is one side of the pair.
 type proxy struct {
-	listen   netip.AddrPort // where REDIRECT lands datagrams
-	peerN4   netip.AddrPort // the far network function's N4 address (empty on the UP side)
-	localNF  netip.Addr     // this side's network function address, used as the delivery target
-	conn     *net.UDPConn
+	listen  netip.AddrPort // where REDIRECT lands datagrams
+	peerN4  netip.AddrPort // the far network function's N4 address (empty on the UP side)
+	localNF netip.Addr     // this side's network function address, used as the delivery target
+	conn    *net.UDPConn
 
 	mu       sync.Mutex
 	lastFrom netip.AddrPort // the far NF endpoint we last delivered from; replies go back to it
@@ -144,7 +144,7 @@ func (p *proxy) deliver(src, dst netip.AddrPort, payload []byte) error {
 	if err != nil {
 		return fmt.Errorf("socket: %w", err)
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	// IP_TRANSPARENT is what lets us bind a source address that is not ours -- the network
 	// function must see its real peer, not this sidecar.
 	if err := unix.SetsockoptInt(fd, unix.SOL_IP, unix.IP_TRANSPARENT, 1); err != nil {
@@ -170,7 +170,7 @@ func (p *proxy) deliver(src, dst netip.AddrPort, payload []byte) error {
 
 func (p *proxy) close() {
 	if p != nil && p.conn != nil {
-		p.conn.Close()
+		_ = p.conn.Close()
 	}
 }
 
@@ -238,14 +238,14 @@ func flushConntrack(dport int) {
 		logf("flushed conntrack for udp/%s so replies are re-evaluated by the new rules", p)
 		return
 	}
-	logf("WARN could not flush conntrack (is conntrack-tools installed?). Pre-existing flows "+
-		"will bypass the redirect and the NF's replies will leave IN PLAINTEXT -- check that "+
+	logf("WARN could not flush conntrack (is conntrack-tools installed?). Pre-existing flows " +
+		"will bypass the redirect and the NF's replies will leave IN PLAINTEXT -- check that " +
 		"both sidecars report captured>0 in each direction.")
 }
 
 func removeRedirectRules(dport, toPort int) {
 	for _, r := range redirectRuleSet("-D", dport, toPort) {
-		exec.Command("iptables", r...).Run()
+		_ = exec.Command("iptables", r...).Run() // best effort: the rule may already be gone
 	}
 }
 

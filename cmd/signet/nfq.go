@@ -80,7 +80,7 @@ type nfqPacket struct {
 
 var nfqCh chan nfqPacket
 
-// nfqQueueDepth mirrors arm A's holdd MaxQueue.
+// nfqQueueDepth bounds the packets held between capture and send.
 var nfqQueueDepth = 2048
 
 // Captured packets are copied out of C memory on every callback -- the C buffer is invalid
@@ -128,8 +128,7 @@ func goNfqCB(id C.int, data *C.uchar, length C.int) C.int {
 }
 
 func nfqStart(queueNum int) (int, error) {
-	// Depth matches arm A's holdd MaxQueue (2048) so neither arm absorbs a burst the
-	// other would have dropped -- the shallower 1024 used before handicapped this arm (D4).
+	// Depth 2048: the earlier 1024 was too shallow for PFCP bursts.
 	nfqCh = make(chan nfqPacket, nfqQueueDepth)
 	fd := int(C.nfq_start(C.int(queueNum)))
 	if fd < 0 {

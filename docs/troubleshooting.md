@@ -130,7 +130,7 @@ index 0. Remove it by name, never by a hardcoded index. (Fixed here; noted becau
 to reintroduce.)
 
 **`kubectl logs <pod>` fails with "a container name must be specified"**
-The pod has two containers now. Name the one you want: `-c n4dtls` for the sidecar, `-c <nf>`
+The pod has two containers now. Name the one you want: `-c signet` for the sidecar, `-c <nf>`
 for the network function.
 
 **The sidecar runs an old build**

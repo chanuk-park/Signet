@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Verify an arm-B deployment on a live OAI: is N4 actually encrypted, did the PFCP
+# SPDX-License-Identifier: Apache-2.0
+# Verify an Signet deployment on a live OAI: is N4 actually encrypted, did the PFCP
 # association survive, and does a real UE session still work end to end.
 #
-#   ./n4dtls-verify.sh [--namespace core] [--smf-pod N] [--upf-pod N] [--skip-ue]
+#   ./signet-verify.sh [--namespace core] [--smf-pod N] [--upf-pod N] [--skip-ue]
 #
 # Every check prints PASS/FAIL with the evidence it used. Exit code 0 only if all pass.
 set -uo pipefail
@@ -26,7 +27,7 @@ on() { local node="$1"; shift
 PASS=0; FAIL=0
 # The sidecar may run as a container in the NF's pod (Envoy model) or as a systemd unit on
 # the host. Read its log from wherever it actually is.
-SIDECAR="n4dtls"
+SIDECAR="signet"
 # Reads the sidecar's log from wherever it actually runs, and says which source it used.
 # Falling back silently is dangerous: a host unit that is no longer running still has a
 # journal, so a stale log from an earlier experiment reads exactly like a live deployment
@@ -41,8 +42,8 @@ sidecar_log() { # $1=smf|upf
     return
   fi
   case "$1" in
-    smf) unit=armb-smf; host="$SMF_HOST";;
-    upf) unit=armb-upf; host="$UPF_HOST";;
+    smf) unit=signet-smf; host="$SMF_HOST";;
+    upf) unit=signet-upf; host="$UPF_HOST";;
   esac
   # Only trust a host unit that is actually running.
   if [ "$(on "$host" "systemctl is-active $unit" 2>/dev/null)" = "active" ]; then
@@ -75,7 +76,7 @@ ok "sidecar source: $SIDECAR_SOURCE"
 
 echo "== 1. mutual-auth DTLS session =="
 S=$(sidecar_log smf | grep -oE 'auth=x509-svid\+mutual cipher=[^ ]+ handshakes=[0-9]+' | tail -1)
-[ -n "$S" ] && ok "session up: $S" || bad "no mutual-auth session line in armb-smf"
+[ -n "$S" ] && ok "session up: $S" || bad "no mutual-auth session line in signet-smf"
 SELF=$(sidecar_log smf | grep -oE 'self=[^ ]+ peer_id=[^ ]+' | tail -1)
 case "$SELF" in
   *self=*peer_id=*) sid=${SELF#self=}; sid=${sid%% *}; pid_=${SELF##*peer_id=}

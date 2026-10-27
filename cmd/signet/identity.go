@@ -19,7 +19,7 @@ package main
 //                 the Envoy-equivalent for a sidecar that cannot live inside the pod: the
 //                 certificate presented on N4 is the one SPIRE issues for the NF itself.
 //
-// §2 D3: no PSK, no static cert, no skip-verify of the SPIFFE identity.
+// No PSK, no static cert, no skip-verify of the SPIFFE identity.
 
 import (
 	"context"
@@ -84,7 +84,7 @@ func (w *workloadAPISource) id() string {
 // X509Source rotates internally; because certificate() re-reads it at each handshake, a
 // rotated SVID is presented on the next handshake without any signal being needed here.
 func (w *workloadAPISource) rotations() <-chan struct{} { return w.rot }
-func (w *workloadAPISource) close()                     { w.src.Close() }
+func (w *workloadAPISource) close()                     { _ = w.src.Close() }
 
 // --- delegated source (attests the NF's pid) ---------------------------------------------
 
@@ -115,7 +115,7 @@ func loadIdentity(ctx context.Context, sockPath, delegatedSock string, workloadP
 		src, mode = ds, "delegated"
 	} else {
 		if sockPath == "" {
-			return nil, fmt.Errorf("no SPIRE Workload API socket (set -spiffe-socket or CIRRUS_SPIRE_SOCKET)")
+			return nil, fmt.Errorf("no SPIRE Workload API socket (set -spiffe-socket or SIGNET_SPIRE_SOCKET)")
 		}
 		// A workload can legitimately match several registration entries, so the Workload
 		// API hands back a SET of SVIDs and "the first one" is whatever SPIRE ordered them
@@ -165,8 +165,8 @@ func loadIdentity(ctx context.Context, sockPath, delegatedSock string, workloadP
 	verify := tlsconfig.VerifyPeerCertificate(src, tlsconfig.AuthorizeID(pid))
 
 	cfg := &dtls.Config{
-		GetCertificate:       func(*dtls.ClientHelloInfo) (*tls.Certificate, error) { return get() },
-		GetClientCertificate: func(*dtls.CertificateRequestInfo) (*tls.Certificate, error) { return get() },
+		GetCertificate:        func(*dtls.ClientHelloInfo) (*tls.Certificate, error) { return get() },
+		GetClientCertificate:  func(*dtls.CertificateRequestInfo) (*tls.Certificate, error) { return get() },
 		VerifyPeerCertificate: verify,
 		// InsecureSkipVerify MUST be true for SPIFFE mutual auth. It disables only the
 		// default hostname / system-root-pool check (a SPIFFE ID is not a DNS name and
@@ -178,7 +178,7 @@ func loadIdentity(ctx context.Context, sockPath, delegatedSock string, workloadP
 		// "certificate signed by unknown authority" (observed).
 		InsecureSkipVerify: true,
 		// ECDHE-ECDSA/P-256 matches SPIRE's default ca_key_type (ec-p256); no PSK suites,
-		// and nothing deliberately slow (§9.1 patch 3, D4).
+		// and nothing deliberately slow.
 		CipherSuites: []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		MTU:          mtu,
 	}

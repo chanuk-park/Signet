@@ -1,0 +1,17 @@
+header:
+  license:
+    spdx-id: Apache-2.0
+    copyright-owner: chanuk-park
+    content: |
+      SPDX-License-Identifier: Apache-2.0
+
+  paths:
+    - "**/*.go"
+    - "**/*.sh"
+    - "**/*.py"
+    - "**/Makefile"
+    - "**/Dockerfile"
+
+dependency:
+  files:
+    - go.mod

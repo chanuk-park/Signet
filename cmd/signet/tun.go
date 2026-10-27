@@ -3,14 +3,14 @@
 
 package main
 
-// Reinjection primitive A from §2 D2: a TUN device. Writing a full IP packet to the
+// Reinjection through a TUN device. Writing a full IP packet to the
 // TUN fd makes the kernel receive it on the input path of that interface — the original
 // L3 header is restored byte-for-byte, no information is lost, and because it never
 // traverses the OUTPUT chain our egress NFQUEUE rule cannot recapture it (no loop).
 // The only gotcha is rp_filter: the injected packet's source is the PEER NF's address,
 // whose route is net1, not the tun, so a strict reverse-path filter would drop it. We
 // set rp_filter=0 on the tun (and log it), which is the #1 cause of silently vanishing
-// injected packets (§2 D2).
+// injected packets.
 
 import (
 	"fmt"
@@ -39,12 +39,12 @@ func openTUN(name string) (*tunDev, error) {
 	const IFF_TUN, IFF_NO_PI = 0x0001, 0x1000
 	*(*uint16)(unsafe.Pointer(&ifr[16])) = IFF_TUN | IFF_NO_PI
 	if _, _, e := unix.Syscall(unix.SYS_IOCTL, f.Fd(), unix.TUNSETIFF, uintptr(unsafe.Pointer(&ifr[0]))); e != 0 {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("TUNSETIFF %q: %v", name, e)
 	}
 	// bring the link up (needed for the kernel to accept injected frames)
 	if err := ifUp(name); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	// rp_filter must be DISABLED for injected packets to be delivered. The injected
@@ -54,7 +54,7 @@ func openTUN(name string) (*tunDev, error) {
 	// mode (2) is also insufficient here because the source belongs to a directly-connected
 	// subnet arriving on the "wrong" interface (verified: only 0 delivers). We therefore set
 	// conf/all/rp_filter=0 in THIS netns (the NF's own netns) and the tun's, and log both so
-	// the setting is on the record (§2 D2 / I8).
+	// the setting is on the record.
 	relaxRPFilter(name)
 	return &tunDev{f: f, name: name}, nil
 }
@@ -65,7 +65,7 @@ func ifUp(name string) error {
 	if err != nil {
 		return fmt.Errorf("socket for ifup: %w", err)
 	}
-	defer unix.Close(s)
+	defer func() { _ = unix.Close(s) }()
 	var ifr [40]byte
 	copy(ifr[:15], name)
 	// read current flags
@@ -86,10 +86,9 @@ func (t *tunDev) inject(ip []byte) (int, error) { return t.f.Write(ip) }
 
 func (t *tunDev) close() {
 	if t != nil && t.f != nil {
-		t.f.Close()
+		_ = t.f.Close()
 	}
 }
-
 
 // relaxRPFilter disables reverse-path filtering for delivered/injected packets. They carry the
 // PEER's source address, whose route is the real N4 interface rather than the one they arrive
@@ -98,10 +97,10 @@ func (t *tunDev) close() {
 // has to be relaxed as well; loose mode (2) is not enough here, only 0.
 func relaxRPFilter(ifaces ...string) {
 	set := func(path string) {
-		if err := os.WriteFile(path, []byte("0"), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "n4dtls: WARN could not set %s=0: %v (delivered packets may be rp_filter-dropped)\n", path, err)
+		if err := os.WriteFile(path, []byte("0"), 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "signet: WARN could not set %s=0: %v (delivered packets may be rp_filter-dropped)\n", path, err)
 		} else {
-			fmt.Fprintf(os.Stderr, "n4dtls: rp_filter %s=0\n", path)
+			fmt.Fprintf(os.Stderr, "signet: rp_filter %s=0\n", path)
 		}
 	}
 	set("/proc/sys/net/ipv4/conf/all/rp_filter")

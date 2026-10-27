@@ -1,12 +1,12 @@
 # Kubernetes deployment
 
-Everything runs in the cluster: SPIRE issues the identities, and `n4dtls` runs as a
+Everything runs in the cluster: SPIRE issues the identities, and `signet` runs as a
 **sidecar container in the SMF and UPF pods**. Nothing is installed on the nodes and no
 shell scripts are involved.
 
 ```
 spire/    SPIRE server (StatefulSet) + agent (DaemonSet) + per-NF registration
-sidecar/  the patches that add the n4dtls container to the SMF and UPF Deployments
+sidecar/  the patches that add the signet container to the SMF and UPF Deployments
 ```
 
 ## 1. Identity — use the SPIRE you already have
@@ -52,17 +52,17 @@ for nf in smf upf; do
     -parentID "spiffe://$TD/k8s/$CLUSTER/node" \
     -spiffeID "spiffe://$TD/ns/core/nf/$nf" \
     -selector "k8s:ns:core" -selector "k8s:sa:oai-$nf" \
-    -selector "k8s:container-name:n4dtls" -x509SVIDTTL 3600
+    -selector "k8s:container-name:signet" -x509SVIDTTL 3600
 done
 ```
 
-`k8s:container-name:n4dtls` is what separates the sidecar's identity from any entry the NF
+`k8s:container-name:signet` is what separates the sidecar's identity from any entry the NF
 itself already has. A workload can match several entries, so the sidecar is told which one to
 present with `-identity`.
 
 ### If you have no SPIRE at all
 
-`deploy/k8s/spire/` stands one up in its own namespace (`n4dtls-spire`, cluster-scoped names
+`deploy/k8s/spire/` stands one up in its own namespace (`signet-spire`, cluster-scoped names
 prefixed to match) so it cannot collide with anything. It is a starting point, not a
 production SPIRE.
 
@@ -71,10 +71,10 @@ production SPIRE.
 The image must be pullable on every node that runs an NF:
 
 ```sh
-docker build -t ghcr.io/chanuk-park/dtls-sidecar:latest .
+docker build -t ghcr.io/chanuk-park/signet:latest .
 # or, for a local registry-less cluster (k3s):
-docker save ghcr.io/chanuk-park/dtls-sidecar:latest -o /tmp/n4dtls.tar
-sudo k3s ctr images import /tmp/n4dtls.tar        # on every NF node
+docker save ghcr.io/chanuk-park/signet:latest -o /tmp/signet.tar
+sudo k3s ctr images import /tmp/signet.tar        # on every NF node
 ```
 
 Edit the two patches for your addresses and trust domain, then apply **UPF first** — it
@@ -108,17 +108,17 @@ kubectl -n core patch deploy oai-smf --type=json \
 ## 3. Check it
 
 ```sh
-kubectl -n core logs deploy/oai-smf -c n4dtls | grep ARMB-STATE
+kubectl -n core logs deploy/oai-smf -c signet | grep SIGNET-STATE
 ```
 
 ```
-ARMB-STATE component=n4dtls role=client self=spiffe://…/ns/core/nf/smf
+SIGNET-STATE component=signet role=client self=spiffe://…/ns/core/nf/smf
   peer_id=spiffe://…/ns/core/nf/upf identity=workload
   auth=x509-svid+mutual cipher=0xc02b handshakes=1 fail=drop payload=untouched
 ```
 
 `self` must be the **NF's** identity and different from `peer_id`; `handshakes=1` means one
-handshake for the life of the session, not one per message. `deploy/n4dtls-verify.sh` runs
+handshake for the life of the session, not one per message. `deploy/signet-verify.sh` runs
 this and ten other checks, including that no plaintext PFCP remains on the wire.
 
 ## Ordering, and why it matters

@@ -106,7 +106,7 @@ buffer dies with the callback) and one DTLS record write. The copy destination c
 pool rather than a fresh allocation, and the write deadline — a hang guard, not a per-message
 SLA — is refreshed on a coarse schedule instead of per packet, because pion's
 `SetWriteDeadline` takes a mutex and resets a runtime timer on every call. Benchmarks are in
-`cmd/n4dtls/bench_test.go`.
+`cmd/signet/bench_test.go`.
 
 The NFQUEUE verdict path is serialized by a mutex: libnetfilter_queue's queue handle is not
 thread-safe, and calling `nfq_set_verdict()` concurrently with the receive loop segfaults

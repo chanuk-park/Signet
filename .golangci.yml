@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+# golangci-lint config. Keeps the bug-catching linters and drops the
+# opinionated style checks (gofmt handles formatting).
+version: "2"
+
+run:
+  timeout: 5m
+  go: "1.24"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - errcheck
+    - ineffassign
+    - unused
+    - staticcheck
+
+  settings:
+    staticcheck:
+      # Only actual-bug checks (SA*); QF*/ST* style checks are off.
+      # SA1019: pion/dtls v3 deprecates dtls.Config, Dial and Listen in favour of
+      # the options-based constructors. Moving to them changes how the SVID
+      # callbacks are wired and needs a SPIRE-backed test, so it is not done
+      # by a lint fix.
+      checks:
+        - SA*
+        - -SA1019
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+  exclusions:
+    generated: strict
+    paths:
+      - ".*\\.pb\\.go$"
+    rules:
+      # Close() on defer/cleanup paths is idiomatic (teardown, nothing to do).
+      - linters: [errcheck]
+        source: "Close\\(\\)"
+      - linters: [errcheck]
+        path: '_test\.go'

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Inject (or remove) the arm-B sidecar as a container in the NF's own pod -- the Envoy
+# SPDX-License-Identifier: Apache-2.0
+# Inject (or remove) the Signet sidecar as a container in the NF's own pod -- the Envoy
 # arrangement. The NF container is not touched: no image change, no config change, no
 # command change. Only the pod gains a second container, which shares the pod's network
 # namespace and is therefore attested by SPIRE's k8s workload attestor as the pod itself.
 #
-#   ./n4dtls-inject.sh up   [--namespace core] [--smf-deploy D] [--upf-deploy D] [--mtu 1200]
-#   ./n4dtls-inject.sh down
+#   ./signet-inject.sh up   [--namespace core] [--smf-deploy D] [--upf-deploy D] [--mtu 1200]
+#   ./signet-inject.sh down
 #
 # Adding a container edits the Deployment, so the NF pods restart. That is a deployment
 # change, not a change to the network function.
@@ -13,8 +14,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NS="core"; MTU=1200; SMF_D=""; UPF_D=""
-IMAGE="${N4DTLS_IMAGE:-ghcr.io/chanuk-park/dtls-sidecar:latest}"
-SIDECAR="n4dtls"
+IMAGE="${SIGNET_IMAGE:-ghcr.io/chanuk-park/signet:latest}"
+SIDECAR="signet"
 DTLS_PORT=8806; DPORT=8805; SMF_Q=62; UPF_Q=61
 
 CMD="${1:-}"; shift || true
@@ -44,7 +45,7 @@ discover() {
 patch_deploy() {
   local dep="$1" role="$2" peer_id="$3" self_id="$4" q="$5"; shift 5
   local args=("-role" "$role" "-peer-id" "$peer_id" "-identity" "$self_id"
-              "-nfqueue" "$q" "-tun" "n4dtls0" "-install-nfq-rule"
+              "-nfqueue" "$q" "-tun" "signet0" "-install-nfq-rule"
               "-dport" "$DPORT" "-mtu" "$MTU" "$@")
   local args_json; args_json=$(printf '%s\n' "${args[@]}" | python3 -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin]))')
   # The sidecar needs NET_ADMIN (iptables/NFQUEUE/TUN in the pod netns), /dev/net/tun, and
@@ -56,7 +57,7 @@ patch_deploy() {
     "image":"$IMAGE",
     "imagePullPolicy":"IfNotPresent",
     "args":$args_json,
-    "env":[{"name":"CIRRUS_SPIRE_SOCKET","value":"unix:///run/spire/sockets/$SPIRE_SOCK_NAME"}],
+    "env":[{"name":"SIGNET_SPIRE_SOCKET","value":"unix:///run/spire/sockets/$SPIRE_SOCK_NAME"}],
     "securityContext":{"privileged":true,"capabilities":{"add":["NET_ADMIN","NET_RAW"]}},
     "volumeMounts":[
       {"name":"spire-agent-socket","mountPath":"/run/spire/sockets","readOnly":true},

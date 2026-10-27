@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Bootstrap SPIRE for the arm-B N4 DTLS sidecars on a generic OAI deployment.
+# SPDX-License-Identifier: Apache-2.0
+# Bootstrap SPIRE for the Signet sidecars on a generic OAI deployment.
 #
 # Creates a SPIRE server on the control node, one agent per node that runs an NF, and a
 # DISTINCT workload entry for the SMF side and the UPF side, so the two sidecars present
@@ -8,7 +9,7 @@
 #
 #   ./spire-bootstrap.sh --smf-node <ip> --upf-node <ip> [--trust-domain <td>] [--version 1.9.6]
 #
-# Emits deploy.env with the values n4dtls-deploy.sh consumes.
+# Emits deploy.env with the values signet-deploy.sh consumes.
 set -euo pipefail
 
 TD="5gc.example.com"
@@ -21,8 +22,8 @@ SMF_NODE=""
 UPF_NODE=""
 CACHE="${SPIRE_CACHE:-/tmp/spire-dl}"
 MODE="in-pod"                     # in-pod (Envoy model) | host (delegated identity)
-SIDECAR_NAME="${SIDECAR_NAME:-n4dtls}"
-RUN="${SPIRE_RUN:-/tmp/spire-armb}"
+SIDECAR_NAME="${SIDECAR_NAME:-signet}"
+RUN="${SPIRE_RUN:-/tmp/spire-signet}"
 SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=no"
 # The k8s workload attestor resolves a pid to its pod (namespace / service account / pod
 # uid) by asking the kubelet. Running on the host, the agent authenticates with the node's
@@ -47,7 +48,7 @@ SMF_ID="spiffe://$TD/ns/core/nf/smf"
 UPF_ID="spiffe://$TD/ns/core/nf/upf"
 # The sidecar's own identity. It authorizes nothing on N4 -- it only names who may use the
 # agent's Delegated Identity API to ask for an attestation of the NF's pid.
-DELEGATE_ID="spiffe://$TD/node/n4dtls"
+DELEGATE_ID="spiffe://$TD/node/signet"
 
 # nf_selectors <node> <pod> -- what SPIRE will see when it attests the workload.
 #
@@ -187,20 +188,20 @@ plugins { KeyManager \"disk\" { plugin_data { directory = \"$RUN/agent/data\" } 
     echo "${conf/SERVERIP/127.0.0.1}" > "$RUN/agent.conf"
     sudo pkill -f 'spire-agent run' 2>/dev/null || true
     sudo rm -rf "$RUN/agent/data"; mkdir -p "$RUN/agent/data" "${RUN}-admin"
-    sudo systemctl reset-failed armb-spire-agent 2>/dev/null || true
-    sudo systemd-run --unit=armb-spire-agent --collect \
+    sudo systemctl reset-failed signet-spire-agent 2>/dev/null || true
+    sudo systemd-run --unit=signet-spire-agent --collect \
       "$BIN/spire-agent" run -config "$RUN/agent.conf" -joinToken "$tok" >/dev/null
   else
-    echo "${conf/SERVERIP/$SERVER_IP}" > /tmp/armb-agent-$name.conf
+    echo "${conf/SERVERIP/$SERVER_IP}" > /tmp/signet-agent-$name.conf
     # Stage into a user-writable path first (scp cannot sudo), then place with sudo.
-    ssh $SSH_OPTS "$node" "mkdir -p /tmp/armb-stage" || { echo "   cannot ssh to $node"; exit 1; }
-    scp $SSH_OPTS -q "$BIN/spire-agent" "$node:/tmp/armb-stage/spire-agent" || { echo "   scp agent -> $node failed"; exit 1; }
-    scp $SSH_OPTS -q /tmp/armb-agent-$name.conf "$node:/tmp/armb-stage/agent.conf" || { echo "   scp conf -> $node failed"; exit 1; }
-    ssh $SSH_OPTS "$node" "sudo install -D -m0755 /tmp/armb-stage/spire-agent $CACHE/spire-$VER/bin/spire-agent && \
-      sudo install -D -m0644 /tmp/armb-stage/agent.conf $RUN/agent.conf && \
-      sudo systemctl stop armb-spire-agent 2>/dev/null; sudo systemctl reset-failed armb-spire-agent 2>/dev/null; \
+    ssh $SSH_OPTS "$node" "mkdir -p /tmp/signet-stage" || { echo "   cannot ssh to $node"; exit 1; }
+    scp $SSH_OPTS -q "$BIN/spire-agent" "$node:/tmp/signet-stage/spire-agent" || { echo "   scp agent -> $node failed"; exit 1; }
+    scp $SSH_OPTS -q /tmp/signet-agent-$name.conf "$node:/tmp/signet-stage/agent.conf" || { echo "   scp conf -> $node failed"; exit 1; }
+    ssh $SSH_OPTS "$node" "sudo install -D -m0755 /tmp/signet-stage/spire-agent $CACHE/spire-$VER/bin/spire-agent && \
+      sudo install -D -m0644 /tmp/signet-stage/agent.conf $RUN/agent.conf && \
+      sudo systemctl stop signet-spire-agent 2>/dev/null; sudo systemctl reset-failed signet-spire-agent 2>/dev/null; \
       sudo rm -rf $RUN/agent/data && sudo mkdir -p $RUN/agent/data ${RUN}-admin && \
-      sudo systemd-run --unit=armb-spire-agent --collect $CACHE/spire-$VER/bin/spire-agent run -config $RUN/agent.conf -joinToken $tok" >/dev/null 2>&1 \
+      sudo systemd-run --unit=signet-spire-agent --collect $CACHE/spire-$VER/bin/spire-agent run -config $RUN/agent.conf -joinToken $tok" >/dev/null 2>&1 \
       || { echo "   remote agent start failed on $node"; exit 1; }
   fi
   echo "   $name -> $wid"
@@ -269,8 +270,8 @@ check_node() { # $1=target(local|ip)  $2=agent bin dir  $3=nf id
     # agent to be able to reach the kubelet. Confirm it loaded rather than waiting for a
     # confusing "no SVID" from the sidecar later.
     local lg
-    if [ "$t" = "local" ]; then lg=$(sudo journalctl -u armb-spire-agent --no-pager -n 200 2>/dev/null)
-    else lg=$(ssh $SSH_OPTS "$t" "sudo journalctl -u armb-spire-agent --no-pager -n 200" 2>/dev/null); fi
+    if [ "$t" = "local" ]; then lg=$(sudo journalctl -u signet-spire-agent --no-pager -n 200 2>/dev/null)
+    else lg=$(ssh $SSH_OPTS "$t" "sudo journalctl -u signet-spire-agent --no-pager -n 200" 2>/dev/null); fi
     echo "$lg" | grep -qi 'plugin_name=k8s.*WorkloadAttestor\|WorkloadAttestor.*plugin_name=k8s' \
       && echo "   OK    $t k8s workload attestor loaded (pods attested by ns/sa/container)" \
       || echo "   WARN  $t could not confirm the k8s workload attestor loaded"

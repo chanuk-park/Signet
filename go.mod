@@ -1,4 +1,4 @@
-module github.com/chanuk-park/dtls-sidecar
+module github.com/chanuk-park/signet
 
 go 1.24.0
 

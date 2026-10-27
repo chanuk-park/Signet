@@ -1,4 +1,4 @@
-# Adds the n4dtls sidecar to the UPF Deployment. The NF container is not listed here and is
+# Adds the signet sidecar to the UPF Deployment. The NF container is not listed here and is
 # therefore untouched: same image, same config, same command.
 #
 #   kubectl -n core patch deploy <upf> --patch-file deploy/k8s/sidecar/smf-patch.yaml
@@ -8,8 +8,8 @@ spec:
   template:
     spec:
       containers:
-        - name: n4dtls
-          image: ghcr.io/chanuk-park/dtls-sidecar:latest
+        - name: signet
+          image: ghcr.io/chanuk-park/signet:latest
           imagePullPolicy: IfNotPresent
           args:
             - -role=server
@@ -17,12 +17,12 @@ spec:
             - -peer-id=spiffe://5gc.example.com/ns/core/nf/smf
             - -identity=spiffe://5gc.example.com/ns/core/nf/upf
             - -nfqueue=61
-            - -tun=n4dtls0
+            - -tun=signet0
             - -install-nfq-rule
             - -dport=8805
             - -mtu=1200
           env:
-            - name: CIRRUS_SPIRE_SOCKET
+            - name: SIGNET_SPIRE_SOCKET
               value: unix:///run/spire/sockets/agent.sock
           securityContext:
             privileged: true
@@ -33,7 +33,7 @@ spec:
       volumes:
         - name: spire-agent-socket
           # Must match the hostPath your SPIRE agent publishes its Workload API socket on,
-          # and CIRRUS_SPIRE_SOCKET above must name the socket FILE inside it. Read both from
+          # and SIGNET_SPIRE_SOCKET above must name the socket FILE inside it. Read both from
           # the running agent's DaemonSet and ConfigMap -- /run/spire/agent-sockets with
           # spire-agent.sock is as common as the default used here.
           hostPath: {path: /run/spire/sockets, type: Directory}

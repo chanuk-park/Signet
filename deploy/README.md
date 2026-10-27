@@ -1,4 +1,4 @@
-# Deploying n4dtls (script-driven variants)
+# Deploying signet (script-driven variants)
 
 > **For Kubernetes, use `deploy/k8s/`** — SPIRE as a StatefulSet/DaemonSet and the sidecar
 > added to the SMF/UPF pods by manifest. See `deploy/k8s/README.md`.
@@ -12,9 +12,9 @@ PIDs, the UPF's N4 address — so nothing here is tied to one cluster.
 
 ```
 spire-bootstrap.sh   SPIRE server + per-node agents + one identity per NF
-n4dtls-inject.sh     in-pod:  add/remove the sidecar container in the NF's pod
-n4dtls-deploy.sh     host:    start/stop the sidecar as a systemd unit on each node
-n4dtls-verify.sh     11 checks against a running deployment
+signet-inject.sh     in-pod:  add/remove the sidecar container in the NF's pod
+signet-deploy.sh     host:    start/stop the sidecar as a systemd unit on each node
+signet-verify.sh     11 checks against a running deployment
 ```
 
 `spire-bootstrap.sh` writes `deploy.env`; the other scripts read it. It is environment
@@ -37,7 +37,7 @@ sharing one credential.
 
 Selectors depend on the mode:
 
-* **in-pod (default)** — `k8s:ns:<ns> k8s:sa:<sa> k8s:container-name:n4dtls`. Needs the k8s
+* **in-pod (default)** — `k8s:ns:<ns> k8s:sa:<sa> k8s:container-name:signet`. Needs the k8s
   workload attestor, which asks the kubelet which pod owns a PID. The script binds the
   built-in `system:kubelet-api-admin` ClusterRole to `system:nodes`, because a node's own
   kubelet client certificate authenticates as `system:node:<name>` and is **not** granted
@@ -52,27 +52,27 @@ The verification step asserts the property that matters in both modes: **a plain
 process on the node does not receive the NF's identity.** If it does, the selectors are not
 binding the identity to the workload and everything downstream is theatre.
 
-## 2a. n4dtls-inject.sh — in-pod (the Envoy arrangement)
+## 2a. signet-inject.sh — in-pod (the Envoy arrangement)
 
 ```sh
-./n4dtls-inject.sh up   [--namespace core] [--smf-deploy D] [--upf-deploy D] [--mtu 1200]
-./n4dtls-inject.sh down
-./n4dtls-inject.sh status
+./signet-inject.sh up   [--namespace core] [--smf-deploy D] [--upf-deploy D] [--mtu 1200]
+./signet-inject.sh down
+./signet-inject.sh status
 ```
 
-Patches the SMF/UPF Deployments with an `n4dtls` container. The NF container is untouched —
+Patches the SMF/UPF Deployments with an `signet` container. The NF container is untouched —
 only the pod gains a second container, which shares the pod's network namespace (no
 `nsenter`, no host access) and is attested by SPIRE as the pod itself.
 
 Build the image first:
 
 ```sh
-docker build -t ghcr.io/chanuk-park/dtls-sidecar:latest .
+docker build -t ghcr.io/chanuk-park/signet:latest .
 # make it available to the kubelet on every NF node, e.g. for k3s:
-docker save ghcr.io/chanuk-park/dtls-sidecar:latest -o /tmp/n4dtls.tar && sudo k3s ctr images import /tmp/n4dtls.tar
+docker save ghcr.io/chanuk-park/signet:latest -o /tmp/signet.tar && sudo k3s ctr images import /tmp/signet.tar
 ```
 
-Override the image with `N4DTLS_IMAGE`.
+Override the image with `SIGNET_IMAGE`.
 
 `down` removes the sidecar **by name**, not by index: a strategic-merge patch does not
 necessarily append, so a hardcoded index can point at the network function itself.
@@ -80,12 +80,12 @@ necessarily append, so a hardcoded index can point at the network function itsel
 Adding a container edits the Deployment, so the NF pods restart. That is a deployment
 change, not a change to the network function.
 
-## 2b. n4dtls-deploy.sh — host sidecar (no pod spec change)
+## 2b. signet-deploy.sh — host sidecar (no pod spec change)
 
 ```sh
-./n4dtls-deploy.sh up   [--smf-pod N] [--upf-pod N] [--upf-n4 IP] [--namespace core] [--mtu 1200]
-./n4dtls-deploy.sh down
-./n4dtls-deploy.sh status
+./signet-deploy.sh up   [--smf-pod N] [--upf-pod N] [--upf-n4 IP] [--namespace core] [--mtu 1200]
+./signet-deploy.sh down
+./signet-deploy.sh status
 ```
 
 Resolves each NF container's host node and PID via kubectl+crictl, learns the UPF's N4
@@ -107,10 +107,10 @@ For the same reason, capture matches **both directions** (`--dport 8805` *and*
 `--sport 8805`): a core that sends from an ephemeral source port receives its responses on
 that port, so matching only `--dport` tunnels requests while leaking responses in plaintext.
 
-## 4. n4dtls-verify.sh
+## 4. signet-verify.sh
 
 ```sh
-./n4dtls-verify.sh [--namespace core] [--smf-pod N] [--upf-pod N] [--skip-ue]
+./signet-verify.sh [--namespace core] [--smf-pod N] [--upf-pod N] [--skip-ue]
 ```
 
 Detects whether the sidecar is in-pod or on the host and reads its log accordingly. Checks,
